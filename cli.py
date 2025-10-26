@@ -1,338 +1,380 @@
+import argparse
+import getpass
+from datetime import datetime
+from services import *
+from exceptions import *
+from database import db
 import os
-import sys
-from models import User, Trip, Ticket
-from exceptions import (
-    InsufficientBalanceError,
-    TripNotAvailableError,
-    AuthenticationError,
-)
+from decouple import config
 
 
-class TerminalCLI:
+class BusTerminalCLI:
     def __init__(self):
         self.current_user = None
-        self.is_running = True
+        self.parser = self.setup_parser()
+
+    def setup_parser(self):
+        parser = argparse.ArgumentParser(description="Bus Terminal Management System")
+        subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+        # Auth commands
+        subparsers.add_parser("register", help="Register a new user")
+        subparsers.add_parser("login", help="Login as user")
+        subparsers.add_parser("admin-login", help="Login as admin")
+        subparsers.add_parser("logout", help="Logout current user")
+
+        # User commands
+        subparsers.add_parser("dashboard", help="Show user dashboard")
+        subparsers.add_parser("trips", help="Show available trips")
+        subparsers.add_parser("my-tickets", help="Show my tickets")
+
+        # Wallet commands
+        wallet_parser = subparsers.add_parser(
+            "add-balance", help="Add balance to wallet"
+        )
+        wallet_parser.add_argument("amount", type=float, help="Amount to add")
+
+        # Ticket commands
+        book_parser = subparsers.add_parser("book-ticket", help="Book a ticket")
+        book_parser.add_argument("trip_id", type=int, help="Trip ID")
+        book_parser.add_argument("seat_number", type=int, help="Seat number")
+
+        cancel_parser = subparsers.add_parser("cancel-ticket", help="Cancel a ticket")
+        cancel_parser.add_argument("ticket_id", type=int, help="Ticket ID")
+
+        # Admin commands
+        subparsers.add_parser("all-users", help="Show all users (admin only)")
+        subparsers.add_parser("reports", help="Show reports (admin only)")
+
+        create_trip_parser = subparsers.add_parser(
+            "create-trip", help="Create a new trip (admin only)"
+        )
+        create_trip_parser.add_argument("origin", help="Trip origin")
+        create_trip_parser.add_argument("destination", help="Trip destination")
+        create_trip_parser.add_argument(
+            "departure_time", help="Departure time (YYYY-MM-DD HH:MM)"
+        )
+        create_trip_parser.add_argument(
+            "arrival_time", help="Arrival time (YYYY-MM-DD HH:MM)"
+        )
+        create_trip_parser.add_argument("price", type=float, help="Ticket price")
+        create_trip_parser.add_argument("seats", type=int, help="Number of seats")
+
+        delete_trip_parser = subparsers.add_parser(
+            "delete-trip", help="Delete a trip (admin only)"
+        )
+        delete_trip_parser.add_argument("trip_id", type=int, help="Trip ID")
+
+        return parser
 
     def clear_screen(self):
         os.system("cls" if os.name == "nt" else "clear")
 
-    def display_menu(self):
+    def print_header(self, title):
         self.clear_screen()
-        print("=== Passenger Terminal System === - cli.py:21")
+        print("= - cli.py:75" * 50)
+        print(f"{title:^50} - cli.py:76")
+        print("= - cli.py:77" * 50)
         if self.current_user:
-            if self.current_user.is_admin:
-                print(f"Welcome Admin: {self.current_user.username} - cli.py:24")
-                print("1. Manage Trips (CRUD) - cli.py:25")
-                print("2. View All Users - cli.py:26")
-                print("3. Logout - cli.py:27")
-                print("4. Exit - cli.py:28")
-            else:
-                print(
-                    f"Welcome: {self.current_user.username} | Balance: ${self.current_user.balance:.2f}"
-                )
-                print("1. View Available Trips - cli.py:33")
-                print("2. Purchase Ticket - cli.py:34")
-                print("3. My Tickets - cli.py:35")
-                print("4. Increase Balance - cli.py:36")
-                print("5. Change Password - cli.py:37")
-                print("6. Logout - cli.py:38")
-                print("7. Exit - cli.py:39")
-        else:
-            print("1. Register - cli.py:41")
-            print("2. Login - cli.py:42")
-            print("3. View Available Trips - cli.py:43")
-            print("4. Admin Login - cli.py:44")
-            print("5. Exit - cli.py:45")
+            print(
+                f"Logged in as: {self.current_user.username} ({self.current_user.role})"
+            )
+        print()
 
-    def register_user(self):
-        self.clear_screen()
-        print("=== User Registration === - cli.py:49")
+    def register(self):
+        self.print_header("USER REGISTRATION")
         username = input("Username: ")
-        password = input("Password: ")
+        password = getpass.getpass("Password: ")
 
         try:
-            user = User.register(username, password)
-            if user:
-                print("Registration successful! - cli.py:56")
-            else:
-                print("Username already exists! - cli.py:58")
+            user = AuthService.register(username, password)
+            print(f"User {username} registered successfully! - cli.py:91")
         except Exception as e:
-            print(f"Registration failed: {e} - cli.py:60")
+            print(f"Error: {e} - cli.py:93")
 
-        input("Press Enter to continue...")
-
-    def login_user(self):
-        self.clear_screen()
-        print("=== User Login === - cli.py:66")
+    def login(self, admin=False):
+        self.print_header("ADMIN LOGIN" if admin else "USER LOGIN")
         username = input("Username: ")
-        password = input("Password: ")
+        password = getpass.getpass("Password: ")
 
-        user = User.login(username, password)
-        if user:
-            self.current_user = user
-            print("Login successful! - cli.py:73")
+        try:
+            if admin:
+                # Check superuser credentials
+                superuser = config("SUPERUSER_USERNAME")
+                superpass = config("SUPERUSER_PASSWORD")
+
+                if username == superuser and password == superpass:
+                    self.current_user = User(username=username, role="superuser")
+                    print("Admin login successful! - cli.py:108")
+                else:
+                    print("Invalid admin credentials - cli.py:110")
+            else:
+                self.current_user = AuthService.login(username, password)
+                print("Login successful! - cli.py:113")
+        except Exception as e:
+            print(f"Error: {e} - cli.py:115")
+
+    def logout(self):
+        if self.current_user:
+            print(f"Goodbye, {self.current_user.username}! - cli.py:119")
+            self.current_user = None
         else:
-            print("Invalid credentials! - cli.py:75")
+            print("No user is logged in - cli.py:122")
 
-        input("Press Enter to continue...")
+    def show_dashboard(self):
+        if not self.current_user:
+            print("Please login first - cli.py:126")
+            return
 
-    def admin_login(self):
-        self.clear_screen()
-        print("=== Admin Login === - cli.py:81")
-        username = input("Username: ")
-        password = input("Password: ")
+        self.print_header("USER DASHBOARD")
+        user = User.get_by_id(self.current_user.id)
 
-        user = User.login(username, password)
-        if user and user.is_admin:
-            self.current_user = user
-            print("Admin login successful! - cli.py:88")
+        print(f"Wallet Balance: ${user.wallet_balance:.2f} - cli.py:132")
+        print("\nRecent Tickets: - cli.py:133")
+
+        tickets = TicketService.get_user_tickets(user.id)
+        if not tickets:
+            print("No tickets found - cli.py:137")
         else:
-            print("Invalid admin credentials! - cli.py:90")
-
-        input("Press Enter to continue...")
-
-    def view_available_trips(self):
-        self.clear_screen()
-        print("=== Available Trips === - cli.py:96")
-        trips = Trip.get_available_trips()
-
-        if not trips:
-            print("No available trips found. - cli.py:100")
-        else:
-            for trip in trips:
+            for ticket in tickets[:5]:  # Show last 5 tickets
+                status_icon = (
+                    "OK"
+                    if ticket["status"] == "PAID"
+                    else (
+                        "Not Paid"
+                        if ticket["status"] == "RESERVED"
+                        else "No Existing Ticket"
+                    )
+                )
                 print(
-                    f"ID: {trip.id} | Cost: ${trip.cost:.2f} |"
-                    f"Start: {trip.start_time} | End: {trip.end_time} | "
-                    f"Seats: {trip.available_seats}/{trip.capacity}"
+                    f"{status_icon} {ticket['origin']} → {ticket['destination']}"
+                    f"(Seat {ticket['seat_number']}) - ${ticket['price']} - {ticket['status']}"
                 )
 
-        input("Press Enter to continue...")
+    def show_trips(self):
+        self.print_header("AVAILABLE TRIPS")
+        trips = TripService.get_available_trips()
 
-    def purchase_ticket(self):
-        self.clear_screen()
-        print("=== Purchase Ticket === - cli.py:113")
-
-        trips = Trip.get_available_trips()
         if not trips:
-            print("No available trips found. - cli.py:117")
-            input("Press Enter to continue...")
+            print("No available trips found - cli.py:159")
             return
 
         for trip in trips:
-            print(f"ID: {trip.id} | Cost: ${trip.cost:.2f} | Start: {trip.start_time} - cli.py:122")
+            print(f"Trip #{trip.id}: {trip.origin} → {trip.destination} - cli.py:163")
+            print(
+                f"{trip.departure_time.strftime('%Y%m%d %H:%M')}"
+                f"→ {trip.arrival_time.strftime('%Y-%m-%d %H:%M')}"
+            )
+            print(
+                f"${trip.price:.2f} | {trip.available_seats}/{trip.total_seats} seats available"
+            )
 
-        try:
-            trip_id = int(input("Enter Trip ID to purchase: "))
-            ticket = Ticket.purchase_ticket(self.current_user, trip_id)
-            if ticket:
-                print("Ticket purchased successfully! - cli.py:128")
-            else:
-                print("Failed to purchase ticket. - cli.py:130")
-        except (InsufficientBalanceError, TripNotAvailableError) as e:
-            print(f"Purchase failed: {e} - cli.py:132")
-        except ValueError:
-            print("Invalid trip ID! - cli.py:134")
-        except Exception as e:
-            print(f"An error occurred: {e} - cli.py:136")
+            # Show available seats
+            seats = Seat.get_available_seats(trip.id)
+            if seats:
+                seat_numbers = [
+                    seat.seat_number for seat in seats[:10]
+                ]  # Show first 10 seats
+                print(
+                    f"Available seats: {', '.join(map(str, seat_numbers))}"
+                    f"{'...' if len(seats) > 10 else ''}"
+                )
+            print()
 
-        input("Press Enter to continue...")
+    def show_my_tickets(self):
+        if not self.current_user:
+            print("Please login first - cli.py:186")
+            return
 
-    def view_my_tickets(self):
-        self.clear_screen()
-        print("=== My Tickets === - cli.py:142")
-        tickets = Ticket.get_user_tickets(self.current_user.id)
+        self.print_header("MY TICKETS")
+        tickets = TicketService.get_user_tickets(self.current_user.id)
 
         if not tickets:
-            print("No tickets found. - cli.py:146")
-        else:
-            for ticket in tickets:
-                print(
-                    f"Ticket ID: {ticket['id']} | Trip: {ticket['trip_id']} |"
-                    f"Cost: ${ticket['cost']:.2f} | Purchase Time: {ticket['purchase_time']} | "
-                    f"Status: {ticket['status']}"
+            print("No tickets found - cli.py:193")
+            return
+
+        for ticket in tickets:
+            status_icon = (
+                "OK"
+                if ticket["status"] == "PAID"
+                else (
+                    "Not Paid"
+                    if ticket["status"] == "RESERVED"
+                    else "No Existing Ticket"
                 )
-
-        input("Press Enter to continue...")
-
-    def increase_balance(self):
-        self.clear_screen()
-        print("=== Increase Balance === - cli.py:159")
-
-        try:
-            amount = float(input("Enter amount to deposit: "))
-            if amount <= 0:
-                print("Amount must be positive! - cli.py:164")
-            else:
-                self.current_user.increase_balance(amount)
-                print(
-                    f"Balance increased by ${amount:.2f}. New balance: ${self.current_user.balance:.2f}"
-                )
-        except ValueError:
-            print("Invalid amount! - cli.py:171")
-
-        input("Press Enter to continue...")
-
-    def change_password(self):
-        self.clear_screen()
-        print("=== Change Password === - cli.py:177")
-
-        new_password = input("Enter new password: ")
-        confirm_password = input("Confirm new password: ")
-
-        if new_password == confirm_password:
-            self.current_user.change_password(new_password)
-            print("Password changed successfully! - cli.py:184")
-        else:
-            print("Passwords don't match! - cli.py:186")
-
-        input("Press Enter to continue...")
-
-    def manage_trips(self):
-        self.clear_screen()
-        print("=== Trip Management === - cli.py:192")
-        print("1. Create Trip - cli.py:193")
-        print("2. View All Trips - cli.py:194")
-        print("3. Update Trip - cli.py:195")
-        print("4. Delete Trip - cli.py:196")
-
-        choice = input("Enter your choice: ")
-
-        if choice == "1":
-            self.create_trip()
-        elif choice == "2":
-            self.view_all_trips()
-        elif choice == "3":
-            self.update_trip()
-        elif choice == "4":
-            self.delete_trip()
-
-    def create_trip(self):
-        self.clear_screen()
-        print("=== Create New Trip === - cli.py:211")
-
-        try:
-            cost = float(input("Cost: "))
-            start_time = input("Start time (YYYY-MM-DD HH:MM:SS): ")
-            end_time = input("End time (YYYY-MM-DD HH:MM:SS): ")
-            capacity = int(input("Capacity: "))
-
-            from database import Database
-
-            db = Database()
-            db.execute_query(
-                """
-                INSERT INTO trips (cost, start_time, end_time, capacity, available_seats)
-                VALUES (%s, %s, %s, %s, %s)
-            """,
-                (cost, start_time, end_time, capacity, capacity),
             )
-
-            print("Trip created successfully!")
-        except Exception as e:
-            print(f"Failed to create trip: {e}")
-
-        input("Press Enter to continue...")
-
-    def view_all_trips(self):
-        self.clear_screen()
-        print("=== All Trips ===")
-
-        from database import Database
-
-        db = Database()
-        trips = db.execute_query("SELECT * FROM trips ORDER BY start_time")
-
-        for trip in trips:
             print(
-                f"ID: {trip['id']} | Cost: ${trip['cost']:.2f} | "
-                f"Start: {trip['start_time']} | End: {trip['end_time']} | "
-                f"Status: {trip['status']} | Seats: {trip['available_seats']}/{trip['capacity']}"
+                f"{status_icon} Ticket #{ticket['id']}: {ticket['origin']} → {ticket['destination']}"
             )
+            print(
+                f"Seat: {ticket['seat_number']} | 💰 ${ticket['price']:.2f} | Status: {ticket['status']}"
+            )
+            print(f"Departure: {ticket['departure_time'].strftime('%Y%m%d %H:%M')}")
 
-        input("Press Enter to continue...")
+            if ticket["status"] in ["RESERVED", "PAID"]:
+                trip = Trip.get_by_id(ticket["trip_id"])
+                if trip and trip.can_cancel():
+                    print(f"Can be cancelled (80% refund) - cli.py:219")
+            print()
 
-    def view_all_users(self):
-        self.clear_screen()
-        print("=== All Users ===")
+    def add_balance(self, amount):
+        if not self.current_user:
+            print("Please login first - cli.py:224")
+            return
 
-        from database import Database
+        try:
+            new_balance = WalletService.add_balance(self.current_user.id, amount)
+            print(f"${amount:.2f} added to wallet. New balance: ${new_balance:.2f}")
+        except Exception as e:
+            print(f"Error: {e} - cli.py:233")
 
-        db = Database()
-        users = db.execute_query(
-            "SELECT id, username, balance, is_admin FROM users ORDER BY created_at"
-        )
+    def book_ticket(self, trip_id, seat_number):
+        if not self.current_user:
+            print("Please login first - cli.py:237")
+            return
+
+        try:
+            ticket = TicketService.book_ticket(
+                self.current_user.id, trip_id, seat_number
+            )
+            print(f"Ticket booked successfully! Ticket ID: {ticket.id} - cli.py:244")
+        except Exception as e:
+            print(f"Error: {e} - cli.py:246")
+
+    def cancel_ticket(self, ticket_id):
+        if not self.current_user:
+            print("Please login first - cli.py:250")
+            return
+
+        try:
+            TicketService.cancel_ticket(ticket_id, self.current_user.id)
+            print(f"Ticket #{ticket_id} cancelled successfully! 80% refund issued.")
+        except Exception as e:
+            print(f"Error: {e} - cli.py:259")
+
+    def show_all_users(self):
+        if not self.current_user or self.current_user.role != "superuser":
+            print("Admin access required - cli.py:263")
+            return
+
+        self.print_header("ALL USERS")
+        users = ReportService.get_all_users()
 
         for user in users:
-            user_type = "Admin" if user["is_admin"] else "User"
-            print(
-                f"ID: {user['id']} | Username: {user['username']} | "
-                f"Balance: ${user['balance']:.2f} | Type: {user_type}"
-            )
+            print(f"{user['username']} (ID: {user['id']}) - cli.py:270")
+            print(f"Balance: ${user['wallet_balance']:.2f} | Role: {user['role']}")
+            print(f"Joined: {user['created_at'].strftime('%Y%m%d')} - cli.py:274")
+            print()
 
-        input("Press Enter to continue...")
+    def show_reports(self):
+        if not self.current_user or self.current_user.role != "superuser":
+            print("Admin access required - cli.py:279")
+            return
+
+        self.print_header("SYSTEM REPORTS")
+
+        # Revenue reports
+        total_revenue = ReportService.get_total_revenue()
+        print(f"Total Revenue: ${total_revenue:.2f} - cli.py:286")
+
+        # Trip statistics
+        trip_stats = ReportService.get_trip_stats()
+        print(
+            f"Trips: {trip_stats['total_trips']} total,"
+            f"{trip_stats['completed_trips']} completed, "
+            f"{trip_stats['upcoming_trips']} upcoming"
+        )
+
+        # Ticket statistics
+        ticket_stats = ReportService.get_ticket_stats()
+        print(
+            f"Tickets: {ticket_stats['total_tickets']} total,"
+            f"{ticket_stats['paid_tickets']} paid, "
+            f"{ticket_stats['reserved_tickets']} reserved, "
+            f"{ticket_stats['cancelled_tickets']} cancelled, "
+            f"{ticket_stats['used_tickets']} used"
+        )
+        print()
+
+    def create_trip(
+        self, origin, destination, departure_time, arrival_time, price, seats
+    ):
+        if not self.current_user or self.current_user.role != "superuser":
+            print("Admin access required - cli.py:311")
+            return
+
+        try:
+            dep_time = datetime.strptime(departure_time, "%Y-%m-%d %H:%M")
+            arr_time = datetime.strptime(arrival_time, "%Y-%m-%d %H:%M")
+
+            trip = TripService.create_trip(
+                origin, destination, dep_time, arr_time, price, seats
+            )
+            print(f"Trip created successfully! Trip ID: {trip.id} - cli.py:321")
+        except Exception as e:
+            print(f"Error: {e} - cli.py:323")
+
+    def delete_trip(self, trip_id):
+        if not self.current_user or self.current_user.role != "superuser":
+            print("Admin access required - cli.py:327")
+            return
+
+        try:
+            TripService.delete_trip(trip_id)
+            print(f"Trip #{trip_id} deleted successfully! - cli.py:332")
+        except Exception as e:
+            print(f"Error: {e} - cli.py:334")
 
     def run(self):
-        while self.is_running:
-            self.display_menu()
-            choice = input("Enter your choice: ")
+        args = self.parser.parse_args()
 
-            if not self.current_user:
-                # Public menu
-                if choice == "1":
-                    self.register_user()
-                elif choice == "2":
-                    self.login_user()
-                elif choice == "3":
-                    self.view_available_trips()
-                elif choice == "4":
-                    self.admin_login()
-                elif choice == "5":
-                    self.is_running = False
-                else:
-                    print("Invalid choice!")
-                    input("Press Enter to continue...")
+        if not args.command:
+            self.parser.print_help()
+            return
 
-            elif self.current_user.is_admin:
-                # Admin menu
-                if choice == "1":
-                    self.manage_trips()
-                elif choice == "2":
-                    self.view_all_users()
-                elif choice == "3":
-                    self.current_user = None
-                    print("Logged out successfully!")
-                    input("Press Enter to continue...")
-                elif choice == "4":
-                    self.is_running = False
-                else:
-                    print("Invalid choice!")
-                    input("Press Enter to continue...")
-
-            else:
-                # User menu
-                if choice == "1":
-                    self.view_available_trips()
-                elif choice == "2":
-                    self.purchase_ticket()
-                elif choice == "3":
-                    self.view_my_tickets()
-                elif choice == "4":
-                    self.increase_balance()
-                elif choice == "5":
-                    self.change_password()
-                elif choice == "6":
-                    self.current_user = None
-                    print("Logged out successfully!")
-                    input("Press Enter to continue...")
-                elif choice == "7":
-                    self.is_running = False
-                else:
-                    print("Invalid choice!")
-                    input("Press Enter to continue...")
-
-        print("Thank you for using Passenger Terminal System!")
+        try:
+            if args.command == "register":
+                self.register()
+            elif args.command == "login":
+                self.login()
+            elif args.command == "admin-login":
+                self.login(admin=True)
+            elif args.command == "logout":
+                self.logout()
+            elif args.command == "dashboard":
+                self.show_dashboard()
+            elif args.command == "trips":
+                self.show_trips()
+            elif args.command == "my-tickets":
+                self.show_my_tickets()
+            elif args.command == "add-balance":
+                self.add_balance(args.amount)
+            elif args.command == "book-ticket":
+                self.book_ticket(args.trip_id, args.seat_number)
+            elif args.command == "cancel-ticket":
+                self.cancel_ticket(args.ticket_id)
+            elif args.command == "all-users":
+                self.show_all_users()
+            elif args.command == "reports":
+                self.show_reports()
+            elif args.command == "create-trip":
+                self.create_trip(
+                    args.origin,
+                    args.destination,
+                    args.departure_time,
+                    args.arrival_time,
+                    args.price,
+                    args.seats,
+                )
+            elif args.command == "delete-trip":
+                self.delete_trip(args.trip_id)
+        except Exception as e:
+            print(f"Unexpected error: {e} - cli.py:380")
 
 
 if __name__ == "__main__":
-    cli = TerminalCLI()
+    # Initialize database
+    db.init_db()
+
+    cli = BusTerminalCLI()
     cli.run()
